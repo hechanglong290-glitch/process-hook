@@ -32,41 +32,78 @@ public final class deviceProperties {
             XposedLog("Failed to load device profile from GitHub.");
         }
 
-        // ==========================================
-        // 在这里直接调用我们的 StatFs 劫持挂载函数
-        // ==========================================
+        // 初始化全套 StatFs 内存伪装
         initStatFsHook();
     }
 
     private static void initStatFsHook() {
         try {
-            // 锁定 StatFs 类（引导类使用 null 类加载器）
             Class<?> statFsClass = XposedHelpers.findClass("android.os.StatFs", null);
 
-            // 1. 拦截 getTotalBytes（获取总字节数）
+            final long FAKE_TOTAL_BYTES = 64L * 1024L * 1024L * 1024L; // 64GB 总容量
+            final long FAKE_FREE_BYTES = 48L * 1024L * 1024L * 1024L;   // 48GB 剩余可用空间
+
+            // 1. 拦截 getTotalBytes
             XposedHelpers.findAndHookMethod(statFsClass, "getTotalBytes", new XC_MethodHook() {
                 @Override
                 protected void afterHookedMethod(MethodHookParam param) throws Throwable {
-                    // 伪装成 64GB (你可以根据需要改成 128L 等)
-                    long fakeBytes = 64L * 1024L * 1024L * 1024L;
-                    param.setResult(fakeBytes);
+                    param.setResult(FAKE_TOTAL_BYTES);
                 }
             });
 
-            // 2. 拦截 getBlockCountLong（获取总块数，双保险）
+            // 2. 拦截 getBlockCountLong
             XposedHelpers.findAndHookMethod(statFsClass, "getBlockCountLong", new XC_MethodHook() {
                 @Override
                 protected void afterHookedMethod(MethodHookParam param) throws Throwable {
                     StatFs thiz = (StatFs) param.thisObject;
                     long blockSize = thiz.getBlockSizeLong();
                     if (blockSize > 0) {
-                        long fakeBlocks = (64L * 1024L * 1024L * 1024L) / blockSize;
-                        param.setResult(fakeBlocks);
+                        param.setResult(FAKE_TOTAL_BYTES / blockSize);
                     }
                 }
             });
 
-            XposedLog("StatFs ROM Spoofing Hooked Successfully!");
+            // 3. 拦截 getFreeBytes
+            XposedHelpers.findAndHookMethod(statFsClass, "getFreeBytes", new XC_MethodHook() {
+                @Override
+                protected void afterHookedMethod(MethodHookParam param) throws Throwable {
+                    param.setResult(FAKE_FREE_BYTES);
+                }
+            });
+
+            // 4. 拦截 getAvailableBytes
+            XposedHelpers.findAndHookMethod(statFsClass, "getAvailableBytes", new XC_MethodHook() {
+                @Override
+                protected void afterHookedMethod(MethodHookParam param) throws Throwable {
+                    param.setResult(FAKE_FREE_BYTES);
+                }
+            });
+
+            // 5. 拦截 getFreeBlocksLong
+            XposedHelpers.findAndHookMethod(statFsClass, "getFreeBlocksLong", new XC_MethodHook() {
+                @Override
+                protected void afterHookedMethod(MethodHookParam param) throws Throwable {
+                    StatFs thiz = (StatFs) param.thisObject;
+                    long blockSize = thiz.getBlockSizeLong();
+                    if (blockSize > 0) {
+                        param.setResult(FAKE_FREE_BYTES / blockSize);
+                    }
+                }
+            });
+
+            // 6. 拦截 getAvailableBlocksLong
+            XposedHelpers.findAndHookMethod(statFsClass, "getAvailableBlocksLong", new XC_MethodHook() {
+                @Override
+                protected void afterHookedMethod(MethodHookParam param) throws Throwable {
+                    StatFs thiz = (StatFs) param.thisObject;
+                    long blockSize = thiz.getBlockSizeLong();
+                    if (blockSize > 0) {
+                        param.setResult(FAKE_FREE_BYTES / blockSize);
+                    }
+                }
+            });
+
+            XposedLog("Full-Spectrum StatFs ROM Spoofing Hooked Successfully!");
         } catch (Throwable t) {
             XposedLog("StatFs Hook Failed: " + t.getMessage());
         }
