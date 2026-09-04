@@ -1,6 +1,9 @@
 package com.rifsxd.processhook;
 
 import de.robv.android.xposed.XposedBridge;
+import de.robv.android.xposed.XposedHelpers;
+import de.robv.android.xposed.XC_MethodHook;
+import android.os.StatFs;
 import org.json.JSONObject;
 
 import java.io.BufferedReader;
@@ -27,6 +30,45 @@ public final class deviceProperties {
             XposedLog("Device profile loaded from GitHub successfully.");
         } else {
             XposedLog("Failed to load device profile from GitHub.");
+        }
+
+        // ==========================================
+        // 在这里直接调用我们的 StatFs 劫持挂载函数
+        // ==========================================
+        initStatFsHook();
+    }
+
+    private static void initStatFsHook() {
+        try {
+            // 锁定 StatFs 类（引导类使用 null 类加载器）
+            Class<?> statFsClass = XposedHelpers.findClass("android.os.StatFs", null);
+
+            // 1. 拦截 getTotalBytes（获取总字节数）
+            XposedHelpers.findAndHookMethod(statFsClass, "getTotalBytes", new XC_MethodHook() {
+                @Override
+                protected void afterHookedMethod(MethodHookParam param) throws Throwable {
+                    // 伪装成 64GB (你可以根据需要改成 128L 等)
+                    long fakeBytes = 64L * 1024L * 1024L * 1024L;
+                    param.setResult(fakeBytes);
+                }
+            });
+
+            // 2. 拦截 getBlockCountLong（获取总块数，双保险）
+            XposedHelpers.findAndHookMethod(statFsClass, "getBlockCountLong", new XC_MethodHook() {
+                @Override
+                protected void afterHookedMethod(MethodHookParam param) throws Throwable {
+                    StatFs thiz = (StatFs) param.thisObject;
+                    long blockSize = thiz.getBlockSizeLong();
+                    if (blockSize > 0) {
+                        long fakeBlocks = (64L * 1024L * 1024L * 1024L) / blockSize;
+                        param.setResult(fakeBlocks);
+                    }
+                }
+            });
+
+            XposedLog("StatFs ROM Spoofing Hooked Successfully!");
+        } catch (Throwable t) {
+            XposedLog("StatFs Hook Failed: " + t.getMessage());
         }
     }
 
