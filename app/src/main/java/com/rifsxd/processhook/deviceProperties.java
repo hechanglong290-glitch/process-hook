@@ -1,6 +1,7 @@
 package com.rifsxd.processhook;
 
 import android.os.StatFs;
+import java.io.File;
 import java.util.HashMap;
 import java.util.Map;
 import de.robv.android.xposed.XC_MethodHook;
@@ -17,23 +18,46 @@ public final class deviceProperties {
 
     public static void initStatFsHook() {
         try {
-            Class<?> statFsClass = XposedHelpers.findClass("android.os.StatFs", null);
+            final long FAKE_TOTAL_BYTES = 64L * 1024L * 1024L * 1024L; // 64GB
+            final long FAKE_FREE_BYTES = 48L * 1024L * 1024L * 1024L;   // 48GB
 
-            // 设为你想要的 64GB
-            final long FAKE_TOTAL_BYTES = 64L * 1024L * 1024L * 1024L; 
-            final long FAKE_FREE_BYTES = 48L * 1024L * 1024L * 1024L;   
-
-            // 1. 拦截构造函数，打印日志确认命中
-            XposedBridge.hookAllConstructors(statFsClass, new XC_MethodHook() {
+            // 1. 劫持 Java 层文件空间查询 (File.getTotalSpace 等)
+            XposedHelpers.findAndHookMethod(File.class, "getTotalSpace", new XC_MethodHook() {
                 @Override
                 protected void afterHookedMethod(MethodHookParam param) throws Throwable {
-                    if (param.args.length > 0 && param.args[0] != null) {
-                        XposedBridge.log("[DeviceProfile] StatFs initialized with path: " + param.args[0]);
+                    File file = (File) param.thisObject;
+                    String path = file.getAbsolutePath();
+                    if (path.contains("data") || path.contains("sdcard") || path.equals("/") || path.contains("mnt")) {
+                        param.setResult(FAKE_TOTAL_BYTES);
                     }
                 }
             });
 
-            // 2. 现代 API 劫持
+            XposedHelpers.findAndHookMethod(File.class, "getFreeSpace", new XC_MethodHook() {
+                @Override
+                protected void afterHookedMethod(MethodHookParam param) throws Throwable {
+                    File file = (File) param.thisObject;
+                    String path = file.getAbsolutePath();
+                    if (path.contains("data") || path.contains("sdcard") || path.equals("/") || path.contains("mnt")) {
+                        param.setResult(FAKE_FREE_BYTES);
+                    }
+                }
+            });
+
+            XposedHelpers.findAndHookMethod(File.class, "getUsableSpace", new XC_MethodHook() {
+                @Override
+                protected void afterHookedMethod(MethodHookParam param) throws Throwable {
+                    File file = (File) param.thisObject;
+                    String path = file.getAbsolutePath();
+                    if (path.contains("data") || path.contains("sdcard") || path.equals("/") || path.contains("mnt")) {
+                        param.setResult(FAKE_FREE_BYTES);
+                    }
+                }
+            });
+
+            // 2. 劫持标准 StatFs（现代字节 + 老式块计算全家桶）
+            Class<?> statFsClass = XposedHelpers.findClass("android.os.StatFs", null);
+
             XposedHelpers.findAndHookMethod(statFsClass, "getTotalBytes", new XC_MethodHook() {
                 @Override
                 protected void afterHookedMethod(MethodHookParam param) throws Throwable {
@@ -55,8 +79,6 @@ public final class deviceProperties {
                 }
             });
 
-            // 3. 【核心救命稻草】老式 API 劫持（适配当贝助手等工具的块计算逻辑）
-            // 强行让块大小为 4KB (4096字节)，总块数 = 64GB / 4096
             final long FAKE_BLOCK_SIZE = 4096L;
             final long FAKE_BLOCK_COUNT = FAKE_TOTAL_BYTES / FAKE_BLOCK_SIZE;
             final long FAKE_FREE_BLOCKS = FAKE_FREE_BYTES / FAKE_BLOCK_SIZE;
@@ -117,9 +139,29 @@ public final class deviceProperties {
                 }
             });
 
-            XposedBridge.log("[DeviceProfile] Complete Block & Bytes StatFs Hooked Successfully!");
+            // 3. 劫持系统服务 StorageStatsService（针对系统设置、偏好设置页面）
+            try {
+                Class<?> storageStatsServiceClass = XposedHelpers.findClass("com.android.server.storage.StorageStatsService", null);
+                XposedBridge.hookAllMethods(storageStatsServiceClass, "getTotalBytes", new XC_MethodHook() {
+                    @Override
+                    protected void afterHookedMethod(MethodHookParam param) throws Throwable {
+                        param.setResult(FAKE_TOTAL_BYTES);
+                    }
+                });
+                XposedBridge.hookAllMethods(storageStatsServiceClass, "getFreeBytes", new XC_MethodHook() {
+                    @Override
+                    protected void afterHookedMethod(MethodHookParam param) throws Throwable {
+                        param.setResult(FAKE_FREE_BYTES);
+                    }
+                });
+                XposedBridge.log("[DeviceProfile] StorageStatsService Hooked Successfully!");
+            } catch (Throwable t) {
+                // 适配不同安卓大版本的系统服务类名变动
+            }
+
+            XposedBridge.log("[DeviceProfile] Full Spectrum Storage Spoofing Initialized Successfully!");
         } catch (Throwable t) {
-            XposedBridge.log("[DeviceProfile] Hook Failed: " + t.getMessage());
+            XposedBridge.log("[DeviceProfile] Full Hook Failed: " + t.getMessage());
         }
     }
 }
