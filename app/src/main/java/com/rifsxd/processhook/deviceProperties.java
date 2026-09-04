@@ -1,7 +1,6 @@
 package com.rifsxd.processhook;
 
 import android.os.StatFs;
-import java.io.File;
 import java.util.HashMap;
 import java.util.Map;
 import de.robv.android.xposed.XC_MethodHook;
@@ -20,38 +19,25 @@ public final class deviceProperties {
         try {
             Class<?> statFsClass = XposedHelpers.findClass("android.os.StatFs", null);
 
-            // 设你想虚构的超大容量（比如 128GB）
-            final long FAKE_TOTAL_BYTES = 128L * 1024L * 1024L * 1024L; 
-            final long FAKE_FREE_BYTES = 96L * 1024L * 1024L * 1024L;   
+            // 设为你想要的 64GB
+            final long FAKE_TOTAL_BYTES = 64L * 1024L * 1024L * 1024L; 
+            final long FAKE_FREE_BYTES = 48L * 1024L * 1024L * 1024L;   
 
-            // 1. 拦截 StatFs 的构造函数（无论它传的是哪个真实路径，如 /data 或 /sdcard，我们统统接管）
+            // 1. 拦截构造函数，打印日志确认命中
             XposedBridge.hookAllConstructors(statFsClass, new XC_MethodHook() {
                 @Override
                 protected void afterHookedMethod(MethodHookParam param) throws Throwable {
-                    // 可以在这里打印或捕获传入的路径参数，方便调试
                     if (param.args.length > 0 && param.args[0] != null) {
-                        String path = param.args[0].toString();
-                        XposedBridge.log("[DeviceProfile] StatFs initialized with path: " + path);
+                        XposedBridge.log("[DeviceProfile] StatFs initialized with path: " + param.args[0]);
                     }
                 }
             });
 
-            // 2. 强行劫持所有容量获取方法，直接返回虚构的 128GB 结果
+            // 2. 现代 API 劫持
             XposedHelpers.findAndHookMethod(statFsClass, "getTotalBytes", new XC_MethodHook() {
                 @Override
                 protected void afterHookedMethod(MethodHookParam param) throws Throwable {
                     param.setResult(FAKE_TOTAL_BYTES);
-                }
-            });
-
-            XposedHelpers.findAndHookMethod(statFsClass, "getBlockCountLong", new XC_MethodHook() {
-                @Override
-                protected void afterHookedMethod(MethodHookParam param) throws Throwable {
-                    StatFs thiz = (StatFs) param.thisObject;
-                    long blockSize = thiz.getBlockSizeLong();
-                    if (blockSize > 0) {
-                        param.setResult(FAKE_TOTAL_BYTES / blockSize);
-                    }
                 }
             });
 
@@ -69,31 +55,71 @@ public final class deviceProperties {
                 }
             });
 
+            // 3. 【核心救命稻草】老式 API 劫持（适配当贝助手等工具的块计算逻辑）
+            // 强行让块大小为 4KB (4096字节)，总块数 = 64GB / 4096
+            final long FAKE_BLOCK_SIZE = 4096L;
+            final long FAKE_BLOCK_COUNT = FAKE_TOTAL_BYTES / FAKE_BLOCK_SIZE;
+            final long FAKE_FREE_BLOCKS = FAKE_FREE_BYTES / FAKE_BLOCK_SIZE;
+
+            XposedHelpers.findAndHookMethod(statFsClass, "getBlockSize", new XC_MethodHook() {
+                @Override
+                protected void afterHookedMethod(MethodHookParam param) throws Throwable {
+                    param.setResult((int) FAKE_BLOCK_SIZE);
+                }
+            });
+
+            XposedHelpers.findAndHookMethod(statFsClass, "getBlockSizeLong", new XC_MethodHook() {
+                @Override
+                protected void afterHookedMethod(MethodHookParam param) throws Throwable {
+                    param.setResult(FAKE_BLOCK_SIZE);
+                }
+            });
+
+            XposedHelpers.findAndHookMethod(statFsClass, "getBlockCount", new XC_MethodHook() {
+                @Override
+                protected void afterHookedMethod(MethodHookParam param) throws Throwable {
+                    param.setResult((int) FAKE_BLOCK_COUNT);
+                }
+            });
+
+            XposedHelpers.findAndHookMethod(statFsClass, "getBlockCountLong", new XC_MethodHook() {
+                @Override
+                protected void afterHookedMethod(MethodHookParam param) throws Throwable {
+                    param.setResult(FAKE_BLOCK_COUNT);
+                }
+            });
+
+            XposedHelpers.findAndHookMethod(statFsClass, "getFreeBlocks", new XC_MethodHook() {
+                @Override
+                protected void afterHookedMethod(MethodHookParam param) throws Throwable {
+                    param.setResult((int) FAKE_FREE_BLOCKS);
+                }
+            });
+
             XposedHelpers.findAndHookMethod(statFsClass, "getFreeBlocksLong", new XC_MethodHook() {
                 @Override
                 protected void afterHookedMethod(MethodHookParam param) throws Throwable {
-                    StatFs thiz = (StatFs) param.thisObject;
-                    long blockSize = thiz.getBlockSizeLong();
-                    if (blockSize > 0) {
-                        param.setResult(FAKE_FREE_BYTES / blockSize);
-                    }
+                    param.setResult(FAKE_FREE_BLOCKS);
+                }
+            });
+
+            XposedHelpers.findAndHookMethod(statFsClass, "getAvailableBlocks", new XC_MethodHook() {
+                @Override
+                protected void afterHookedMethod(MethodHookParam param) throws Throwable {
+                    param.setResult((int) FAKE_FREE_BLOCKS);
                 }
             });
 
             XposedHelpers.findAndHookMethod(statFsClass, "getAvailableBlocksLong", new XC_MethodHook() {
                 @Override
                 protected void afterHookedMethod(MethodHookParam param) throws Throwable {
-                    StatFs thiz = (StatFs) param.thisObject;
-                    long blockSize = thiz.getBlockSizeLong();
-                    if (blockSize > 0) {
-                        param.setResult(FAKE_FREE_BYTES / blockSize);
-                    }
+                    param.setResult(FAKE_FREE_BLOCKS);
                 }
             });
 
-            XposedBridge.log("[DeviceProfile] Virtual Path & 128G StatFs Hooked Successfully!");
+            XposedBridge.log("[DeviceProfile] Complete Block & Bytes StatFs Hooked Successfully!");
         } catch (Throwable t) {
-            XposedBridge.log("[DeviceProfile] Virtual Path Hook Failed: " + t.getMessage());
+            XposedBridge.log("[DeviceProfile] Hook Failed: " + t.getMessage());
         }
     }
 }
