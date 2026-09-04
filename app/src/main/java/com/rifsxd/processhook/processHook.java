@@ -30,11 +30,13 @@ public class processHook implements IXposedHookLoadPackage {
     @Override
     public void handleLoadPackage(XC_LoadPackage.LoadPackageParam loadPackageParam) {
         String packageName = loadPackageParam.packageName;
-        deviceInfo properties = deviceProperties.DEVICE_MAP.get(packageName);
 
-        // Check if the package is in our device properties map
+        // 【核心修改】不管配没配置表，只要在 LSPosed 勾选了并启动，无条件强制执行 64G 内存修改
+        deviceProperties.initStatFsHook();
+
+        // 保持原有的机型与刷新率伪装逻辑
+        deviceInfo properties = deviceProperties.DEVICE_MAP.get(packageName);
         if (properties != null) {
-            // Spoof device properties and refresh rate
             spoofDeviceProperties(properties);
             spoofRefreshRate(properties);
             XposedBridge.log("Spoofed " + packageName + " as " + properties.device);
