@@ -1,6 +1,7 @@
 package com.rifsxd.processhook;
 
 import android.os.StatFs;
+import java.io.File;
 import java.util.HashMap;
 import java.util.Map;
 import de.robv.android.xposed.XC_MethodHook;
@@ -12,18 +13,30 @@ public final class deviceProperties {
     public static final Map<String, deviceInfo> DEVICE_MAP = new HashMap<>();
 
     static {
-        // 你原本的机型配置表可以继续写在这里
-        // 比如：DEVICE_MAP.put("com.example.app", new deviceInfo(...));
+        // 配置表保留
     }
 
-    // 必须是 public static void，允许 processHook 外部调用
     public static void initStatFsHook() {
         try {
             Class<?> statFsClass = XposedHelpers.findClass("android.os.StatFs", null);
 
-            final long FAKE_TOTAL_BYTES = 64L * 1024L * 1024L * 1024L; // 64GB 总容量
-            final long FAKE_FREE_BYTES = 48L * 1024L * 1024L * 1024L;   // 48GB 剩余可用空间
+            // 设你想虚构的超大容量（比如 128GB）
+            final long FAKE_TOTAL_BYTES = 128L * 1024L * 1024L * 1024L; 
+            final long FAKE_FREE_BYTES = 96L * 1024L * 1024L * 1024L;   
 
+            // 1. 拦截 StatFs 的构造函数（无论它传的是哪个真实路径，如 /data 或 /sdcard，我们统统接管）
+            XposedBridge.hookAllConstructors(statFsClass, new XC_MethodHook() {
+                @Override
+                protected void afterHookedMethod(MethodHookParam param) throws Throwable {
+                    // 可以在这里打印或捕获传入的路径参数，方便调试
+                    if (param.args.length > 0 && param.args[0] != null) {
+                        String path = param.args[0].toString();
+                        XposedBridge.log("[DeviceProfile] StatFs initialized with path: " + path);
+                    }
+                }
+            });
+
+            // 2. 强行劫持所有容量获取方法，直接返回虚构的 128GB 结果
             XposedHelpers.findAndHookMethod(statFsClass, "getTotalBytes", new XC_MethodHook() {
                 @Override
                 protected void afterHookedMethod(MethodHookParam param) throws Throwable {
@@ -78,9 +91,9 @@ public final class deviceProperties {
                 }
             });
 
-            XposedBridge.log("[DeviceProfile] Full-Spectrum StatFs ROM Spoofing Hooked Successfully!");
+            XposedBridge.log("[DeviceProfile] Virtual Path & 128G StatFs Hooked Successfully!");
         } catch (Throwable t) {
-            XposedBridge.log("[DeviceProfile] StatFs Hook Failed: " + t.getMessage());
+            XposedBridge.log("[DeviceProfile] Virtual Path Hook Failed: " + t.getMessage());
         }
     }
 }
